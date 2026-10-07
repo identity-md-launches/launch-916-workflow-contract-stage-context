@@ -1,0 +1,28 @@
+{
+  "hook": "BaseHook",
+  "name": "SwarmlingsHook",
+  "pausable": false,
+  "currencySettler": false,
+  "safeCast": true,
+  "transientStorage": false,
+  "shares": { "options": false },
+  "permissions": {
+    "beforeInitialize": false,
+    "afterInitialize": true,
+    "beforeAddLiquidity": false,
+    "afterAddLiquidity": false,
+    "beforeRemoveLiquidity": false,
+    "afterRemoveLiquidity": false,
+    "beforeSwap": true,
+    "afterSwap": true,
+    "beforeDonate": false,
+    "afterDonate": false,
+    "beforeSwapReturnDelta": true,
+    "afterSwapReturnDelta": true,
+    "afterAddLiquidityReturnDelta": false,
+    "afterRemoveLiquidityReturnDelta": false
+  },
+  "inputs": {},
+  "access": "none",
+  "info": { "license": "MIT" }
+}
