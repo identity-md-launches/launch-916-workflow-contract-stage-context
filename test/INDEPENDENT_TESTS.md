@@ -26,6 +26,15 @@ The pre-existing suites retain constructor/runtime, renderer fallback/staticcall
 permission, maximum collection, NFT-ID reuse, reward-fraction and additional
 reentrancy/authorization checks.
 
+The revision extends the existing conservation handler with rejected ETH payments
+through four inherited DN404 read selectors. Each selector must remain readable
+without ETH and reject a nonzero payment without changing the token's balance.
+Random sequences interleave these attempts with swaps, notifications, ownership
+changes and claims. A deterministic regression also covers zero active NFTs,
+an active holder, the last NFT burning, and full withdrawal of the resulting
+holder and treasury liabilities. This independently exercises the accepted
+fallback ETH guard; the earlier coverage and accounting oracles are retained.
+
 ## Accounting oracles
 
 The hook oracle reads the **PoolManager's Swap event**, which reports raw pool

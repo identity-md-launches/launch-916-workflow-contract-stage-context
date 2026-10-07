@@ -45,6 +45,7 @@ contract IndependentConservationHandler is Test {
     uint256 public zeroHolderNotifications;
     uint256 public successfulDistributions;
     uint256 public successfulClaims;
+    uint256 public rejectedUnnotifiedPayments;
 
     constructor(Swarmlings t, SwarmlingsHook h, PoolSwapTest r, PoolClaimsTest c, IPoolManager m, PoolKey memory k) {
         token = t;
@@ -72,6 +73,26 @@ contract IndependentConservationHandler is Test {
         uint256 amount = bound(seed, 0, 2 ether);
         _allocate(amount);
         token.notifyReward{value: amount}();
+    }
+
+    function rejectUnnotifiedPayment(uint8 selectorSeed, uint96 amountSeed) external {
+        // These inherited read selectors return from assembly. They must never
+        // accept ETH before Swarmlings' reward-notification accounting runs.
+        bytes[4] memory calls = [
+            abi.encodeWithSignature("implementsDN404()"),
+            abi.encodeWithSignature("totalNFTSupply()"),
+            abi.encodeWithSignature("balanceOfNFT(address)", actors[0]),
+            abi.encodeWithSignature("ownerAtNFT(uint256)", uint256(1))
+        ];
+        bytes memory data = calls[selectorSeed % 4];
+        (bool readable,) = address(token).staticcall(data);
+        assertTrue(readable, "selector must work without ETH");
+        uint256 beforeBalance = address(token).balance;
+        (bool ok, bytes memory reason) = address(token).call{value: bound(amountSeed, 1, 2 ether)}(data);
+        assertFalse(ok, "fallback accepted ETH outside notifyReward");
+        assertEq(reason, abi.encodeWithSelector(Swarmlings.UnexpectedETH.selector));
+        assertEq(address(token).balance, beforeBalance, "rejected ETH must be refunded");
+        ++rejectedUnnotifiedPayments;
     }
 
     function trade(uint8 actorSeed, uint8 modeSeed, uint96 amountSeed) external {
@@ -218,7 +239,7 @@ contract IndependentConservationInvariantTest is StdInvariant, CoreFixture {
         }
         token.transfer(address(handler), token.balanceOf(address(this)));
         vm.deal(address(handler), 1_000_000 ether);
-        bytes4[] memory selectors = new bytes4[](10);
+        bytes4[] memory selectors = new bytes4[](11);
         selectors[0] = handler.notify.selector;
         selectors[1] = handler.trade.selector;
         selectors[2] = handler.donateClaims.selector;
@@ -229,6 +250,7 @@ contract IndependentConservationInvariantTest is StdInvariant, CoreFixture {
         selectors[7] = handler.toggleSkip.selector;
         selectors[8] = handler.burnAll.selector;
         selectors[9] = handler.claim.selector;
+        selectors[10] = handler.rejectUnnotifiedPayment.selector;
         targetContract(address(handler));
         targetSelector(FuzzSelector(address(handler), selectors));
     }
@@ -336,6 +358,34 @@ contract IndependentConservationInvariantTest is StdInvariant, CoreFixture {
         assertEq(handler.successfulDistributions(), 1);
         handler.claim(5, false, false);
         assertEq(handler.successfulClaims(), 1);
+        invariant_claimedPlusOwedPlusHeldEqualsNotified();
+        invariant_hookFeesMatchIndependentSwapAndDonationLedger();
+        invariant_supplyNFTBackingAndExcludedRecipients();
+    }
+
+    function test_unnotifiedPaymentsCannotPolluteRewardsBeforeOrAfterLastBurn() public {
+        handler.burnAll();
+        handler.notify(1 ether);
+        for (uint8 selector; selector < 4; ++selector) {
+            handler.rejectUnnotifiedPayment(selector, 1);
+        }
+        handler.receiveTokens(0, uint96(UNIT));
+        handler.notify(2 ether);
+        for (uint8 selector; selector < 4; ++selector) {
+            handler.rejectUnnotifiedPayment(selector, 1 ether);
+        }
+        handler.burnAll();
+        assertEq(token.owed(handler.actors(0)), 2 ether);
+        assertEq(token.owed(token.TREASURY()), 1 ether);
+        for (uint8 selector; selector < 4; ++selector) {
+            handler.rejectUnnotifiedPayment(selector, 2 ether);
+        }
+        assertEq(handler.rejectedUnnotifiedPayments(), 12);
+        invariant_claimedPlusOwedPlusHeldEqualsNotified();
+        handler.claim(0, true, false);
+        handler.claim(5, true, false);
+        assertEq(handler.totalPaid(), 3 ether);
+        assertEq(address(token).balance, 0);
         invariant_claimedPlusOwedPlusHeldEqualsNotified();
         invariant_hookFeesMatchIndependentSwapAndDonationLedger();
         invariant_supplyNFTBackingAndExcludedRecipients();
