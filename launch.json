@@ -1,0 +1,27 @@
+{
+  "kind": "univ4_hook",
+  "hook": {
+    "contract": "SwarmlingsHook",
+    "constructorArgs": ["$poolManager"],
+    "permissions": [
+      "afterInitialize",
+      "beforeSwap",
+      "afterSwap",
+      "beforeSwapReturnDelta",
+      "afterSwapReturnDelta"
+    ]
+  },
+  "token": {
+    "contract": "Swarmlings",
+    "name": "Swarmlings",
+    "symbol": "LING",
+    "decimals": 18
+  },
+  "pool": {
+    "pairedCurrency": "0x0000000000000000000000000000000000000000",
+    "fee": 12500,
+    "tickSpacing": 60,
+    "initialPrice": "79228162514264337593543950336"
+  },
+  "notes": "Sepolia ETH/LING technical manifest. Pool currency0 is native ETH and currency1 is the newly deployed Swarmlings token. The approved brief does not specify tick spacing or initial price; spacing 60 and sqrtPriceX96 = 2^96 use the tested fixture in test/SwarmlingsHook.t.sol as explicit Sepolia assumptions. This initializes tick 0 at 1 LING per ETH because both currencies have 18 decimals; it is not an approved economic valuation. Swarmlings has a zero-argument constructor that deploys its own DN404Mirror. The hook takes only IPoolManager, resolved from $poolManager; it has no token constructor argument. Its enabled permissions have address mask 0x10cc. All implemented hook callbacks require the configured PoolManager. afterInitialize accepts the listed 12500 LP fee and permanently binds the first pool with native ETH as currency0, taking LING from currency1; other pools are not charged the hook fee. Token deployment, hook deployment and initialization of the intended pool must be atomic to prevent another native pool binding first. The pool's 1.25% LP fee is separate from the fixed 1.25% ETH hook fee, nominally 2.5% total, with exact rounding and fee bases described in README.md. Swap callbacks collect native ERC-6909 claims without pushing ETH. Anyone may call distribute() when pending fees reach 0.01 ETH; it redeems all pending claims and forwards the ETH to Swarmlings.notifyReward(). Active NFTs share rewards equally at notification time, and holders withdraw their own rewards through claim(ids). With zero active NFTs, the implemented token instead credits its fixed TREASURY, 0x92cEf4823119f3332A85A39023eEbA01a06890c4; authorization of that fallback beneficiary remains a review matter and is not granted here. Contract wallets skip NFTs by default and may opt in with setSkipNFT(false). The fixed external renderer is used only for tokenURI, with placeholder metadata if unavailable. No administrative setters or upgrade paths are implemented. Supply, allocations and deployment policy are separately versioned; source publication, signed artifact linkage, admission and deployment are service responsibilities. Independent review of the accepted sources and this manifest is a separate stage contribution. This manifest does not assert those later checks have passed."
+}
