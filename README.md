@@ -4,7 +4,9 @@ Swarmlings (LING) is a fixed-supply DN404 token and ERC-721 mirror. Every whole
 300,000 LING supports one Swarmling, with at most 3,333 NFTs. SwarmlingsHook charges
 a fixed **1.25% fee per swap in native ETH**, all for NFT rewards, on top of the IMD
 pool's **1.25% LP fee** (1% to the launch payer, 0.25% to IMD): **2.5% nominal total**.
-The four fee bases below specify the exact arithmetic, including rounding.
+The four fee bases below specify the exact arithmetic, including rounding. When
+no NFT exists at notification, section C's fixed TREASURY fallback receives the
+reward credit instead, as detailed below.
 
 No owner, admin, proxy, pause, upgrade, mint authority, freeze or seizure function
 can change these contracts after deployment. The hook keeps no share and has no
@@ -30,11 +32,11 @@ Third-party source retains its SPDX notices and accompanying licenses.
 
 | Deployable contract | Source | Constructor | Runtime bytes |
 | --- | --- | --- | ---: |
-| Swarmlings | `src/Swarmlings.sol` | none | 12,146 |
+| Swarmlings | `src/Swarmlings.sol` | none | 12,168 |
 | DN404Mirror | `lib/dn404/src/DN404Mirror.sol` | created internally by Swarmlings | 2,939 |
 | SwarmlingsHook | `src/SwarmlingsHook.sol` | `IPoolManager manager` only | 4,012 |
 
-All three are below EIP-170's 24,576-byte limit; the token's 15,867-byte creation
+All three are below EIP-170's 24,576-byte limit; the token's 15,889-byte creation
 code, including its mirror constructor, also fits EIP-3860. Runtime tests scan all
 three for `DELEGATECALL`, `CALLCODE` and `SELFDESTRUCT`, skipping PUSH operands.
 ABIs are exported at [docs/abi](docs/abi); [the ABI guide](docs/ABI.md) describes the
@@ -67,6 +69,10 @@ acceptance is needed. No token/NFT receiver callback runs on an ordinary ERC-20
 transfer. Minting/burning many NFTs is linear in gas: batch large transfers and do
 not opt in a wallet holding the entire supply in one transaction without estimating
 gas. The full-collection test deliberately uses Foundry's larger test gas budget.
+The revision reproduction measured approximately 48.23 million gas to materialize
+all 3,333 NFTs in one opt-in. That cannot fit a 36 million gas budget. A large
+skipping wallet can transfer LING in smaller batches to opted-in wallets instead;
+there is no guaranteed full-supply opt-in within a chain's block gas limit.
 
 Permit2's upstream default infinite allowance is disabled. All ERC-20 spenders
 require an explicit approval. The unmodified mirror exposes upstream marketplace
@@ -122,6 +128,17 @@ mint and swap. Safe casts protect int128 return deltas; full-width math handles
 the int256 negative endpoint. Trades with an ETH fee base below 80 wei round the
 hook fee to zero. There is no LP fee override.
 
+The fee bases are mode-dependent. Before integer rounding, the hook fee is 1.25%
+of total ETH paid for an exact-input buy, but `125 / 10125`, about **1.234568%**,
+of total ETH paid for an exact-output buy. For sells it is 1.25% of raw pool ETH
+output for exact input, but about **1.234568%** of raw pool ETH output for exact
+output (1.25% of the requested net receipt). Thus identical pool fills can have
+different hook fees. A local snapshot comparison bought the same
+974206246689751447 LING minor units for 1 ETH exact input versus
+0.99984375 ETH exact output, with fees of 0.0125 versus 0.01234375 ETH.
+Integrations must quote the selected mode's formula; the nominal 2.5% total is
+not a promise of the same effective percentage of wallet cash flow in every mode.
+
 The only external interaction in a swap callback is the explicitly required
 `poolManager.mint(address(this), 0, fee)`. There is no ETH push, reward notification,
 renderer call, currency transfer or other third-party call there. ERC-6909 claims
@@ -169,10 +186,25 @@ requirement or historical allocation of still-pending hook claims. Someone acqui
 NFTs just before distribution participates in that distribution; this follows the
 specified current-holder accumulator and is not a time-weighted reward system.
 
+This permits reward sniping. The review proof reproduced a buy of three NFTs,
+distribution, claim and sale in one transaction after 0.1 ETH had accumulated
+while another wallet held the only NFT. The buyer gained 0.036456270630111769 ETH
+before gas, and the earlier holder received 0.028002133603265959 ETH. The required
+current-holder formula gives no protection against this sequence; a seller also
+has no entitlement to fees still waiting in the hook. Frequent distribution may
+reduce the amount exposed, but cannot guarantee prevention. Allocating fees at
+swap time or imposing holding-duration eligibility would change the assigned
+reward design. Swap-time notification would also violate the restriction against
+token calls inside swap callbacks. These mechanics are preserved in this revision;
+the economic risk remains and is recorded in `.imd-responses.json` for review.
+
 If there are no active NFTs, the full payment becomes `owed[TREASURY]`, where
 `TREASURY = 0x92cEf4823119f3332A85A39023eEbA01a06890c4` is the requester's intended
 wallet. It is used only for this fallback, grants no role, and receives no push.
 TREASURY withdraws with `claim([])`, as does a previous holder with burned NFTs.
+This includes the initial zero-NFT period and any later period after every NFT
+has burned. Such rewards are not carried forward for future holders. This exact
+address and pull-payment behavior are expressly required by assignment section C.
 
 `claim(ids)` settles only caller-owned IDs, zeros the caller's owed amount, and
 pays that caller via checked ETH call under a reentrancy guard. Empty arrays are
@@ -183,9 +215,12 @@ earned fractions or transfer them to a buyer. The mandated accumulator division
 can leave sub-wei scaled dust per notification; wei rounding may leave ETH in the
 token until fractions become claimable. The hook still forwards every redeemed wei.
 
-Use `notifyReward` to send donations. Plain ETH sends to the token and hook are
-rejected (except PoolManager's redemption to the hook). Forced ETH is outside the
-claim/reward ledger and there is no rescue authority or sweep function.
+Use `notifyReward` to send donations. Nonzero ETH sent to the token's fallback,
+including with DN404 read selectors, reverts with `UnexpectedETH` before dispatch.
+Calls with zero value retain DN404's mirror behavior. Plain nonzero ETH sends to
+the token and hook are rejected (except PoolManager's redemption to the hook).
+Forced ETH is outside the claim/reward ledger and there is no rescue authority or
+sweep function.
 
 ## Deployment and operations handoff
 
@@ -230,6 +265,9 @@ success/absence/revert/STATICCALL enforcement, hook address validation, callback
 authorization, pool binding, four swap modes, two partial-fill policies, zero-ETH
 startup, claim donations, threshold boundaries, failed distribution rollback and
 distribution reentrancy. Two fuzz tests run 256 cases each.
+Revision tests additionally cover ETH rejection across all DN404 read selectors,
+preserved mirror permissions, identical-fill fee differences, and ownership changes
+between fee collection and notification.
 
 A stateful invariant suite runs 64 sequences of depth 64, requiring no unexpected
 reverts. An independent test ledger credits each wallet by its NFT count at each

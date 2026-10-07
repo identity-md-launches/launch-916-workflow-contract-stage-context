@@ -169,6 +169,45 @@ contract SwarmlingsHookTest is Test, HookDeployer {
         assertLedger();
     }
 
+    function test_identicalBuyFillsHaveModeDependentFees() public {
+        initializeAndSeed();
+        uint256 snapshot = vm.snapshotState();
+        BalanceDelta exactIn = router.swap(key, params(true, true, 1 ether));
+        assertEq(hook.pendingFees(), 0.0125 ether);
+        assertEq(exactIn.amount0(), -1 ether);
+        uint256 output = uint256(int256(exactIn.amount1()));
+        assertEq(output, 974206246689751447);
+        assertTrue(vm.revertToState(snapshot));
+        BalanceDelta exactOut = router.swap(key, params(true, false, output));
+        assertEq(exactOut.amount1(), exactIn.amount1());
+        assertEq(exactOut.amount0(), -0.99984375 ether);
+        assertEq(hook.pendingFees(), 0.01234375 ether);
+        assertLedger();
+    }
+
+    function test_pendingFeesAllocateAtNotificationAndNotAtSwap() public {
+        initializeAndSeed();
+        uint256 unit = token.UNIT();
+        token.transfer(alice, unit);
+        router.swap(key, params(true, true, 8 ether));
+        assertEq(hook.pendingFees(), 0.1 ether);
+        assertEq(token.activeNFTs(), 1);
+        assertEq(token.pending(alice, token.ownedIds(alice, 0, 1)), 0);
+
+        address laterHolder = address(0xb0b);
+        token.transfer(laterHolder, 3 * unit);
+        hook.distribute();
+        assertEq(token.pending(alice, token.ownedIds(alice, 0, 1)), 0.025 ether);
+        assertEq(token.pending(laterHolder, token.ownedIds(laterHolder, 0, 3)), 0.075 ether);
+        vm.prank(laterHolder);
+        token.transfer(address(this), 3 * unit);
+        assertEq(token.owed(laterHolder), 0.075 ether);
+        vm.prank(laterHolder);
+        token.claim(new uint256[](0));
+        assertEq(laterHolder.balance, 0.075 ether);
+        assertLedger();
+    }
+
     function test_firstBuyOnTokenOnlyLiquidityWithZeroManagerETH() public {
         manager.initialize(key, PRICE);
         router.liquidity(key, ModifyLiquidityParams(-600, 0, 1000 ether, bytes32(0)));

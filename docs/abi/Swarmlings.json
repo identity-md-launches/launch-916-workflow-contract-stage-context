@@ -664,5 +664,10 @@
     "type": "error",
     "name": "TransferToZeroAddress",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedETH",
+    "inputs": []
   }
 ]

@@ -28,12 +28,24 @@ contract Swarmlings is DN404, ReentrancyGuard, IRewardReceiver {
 
     error NotNFTOwner(uint256 id);
     error ETHTransferFailed();
+    error UnexpectedETH();
 
     event RewardNotified(address indexed sender, uint256 amount, uint256 activeNFTs);
     event RewardClaimed(address indexed account, uint256 amount);
 
     constructor() {
         _initializeDN404(1e27, msg.sender, address(new DN404Mirror(msg.sender)));
+    }
+
+    /// @dev Must run before dn404Fallback, whose served selectors return from assembly.
+    modifier noETH() {
+        if (msg.value != 0) revert UnexpectedETH();
+        _;
+    }
+
+    /// @dev Mirror dispatch remains available without value. Donations use notifyReward.
+    fallback() external payable override noETH dn404Fallback {
+        revert FnSelectorNotRecognized();
     }
 
     function name() public pure override returns (string memory) {

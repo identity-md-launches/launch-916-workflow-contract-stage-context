@@ -38,10 +38,17 @@ should still see `pending(account, [])` and be able to `claim([])`. A wallet nee
 not include every NFT in a claim. The view includes `owed` once per call, so do
 not sum `pending` across pages without removing that repeated component.
 
-Errors include `NotNFTOwner(id)`, `ETHTransferFailed`, `ReentrantCall`,
+Errors include `NotNFTOwner(id)`, `ETHTransferFailed`, `UnexpectedETH`, `ReentrantCall`,
 `OnlyPoolManager`, `UnexpectedUnlock`, `BelowMinimum` and `PartialFill`. DN404 and
 core supply their own errors, exposed in the respective compiled ABIs. Core wraps
 hook reverts during swaps; integrations should decode the inner hook error too.
+
+Send ETH only through the token's `notifyReward()` entry point. Fallback calls,
+including DN404 read selectors, reject nonzero value with `UnexpectedETH`.
+Rewards are allocated to NFTs active when notification executes. `pendingFees()`
+is unallocated and must not be displayed as a holder's vested reward; buying just
+before distribution can capture a share. With zero active NFTs the notification
+instead credits the fixed `TREASURY`, which withdraws using `claim([])`.
 
 Project events are `RewardNotified(sender, amount, activeNFTs)`,
 `RewardClaimed(account, amount)`, `LaunchPoolBound(poolId, ling)`,

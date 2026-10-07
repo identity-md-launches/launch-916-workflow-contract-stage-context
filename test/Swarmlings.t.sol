@@ -151,6 +151,72 @@ contract SwarmlingsTest is Test {
         assertEq(token.balanceOf(address(this)), 1e27);
     }
 
+    function test_fallbackRejectsETHBeforeEveryReadSelector() public {
+        token.transfer(alice, UNIT);
+        token.notifyReward{value: 1 ether}();
+        bytes[8] memory calls = [
+            abi.encodeWithSignature("totalNFTSupply()"),
+            abi.encodeWithSignature("balanceOfNFT(address)", alice),
+            abi.encodeWithSignature("ownerOfNFT(uint256)", 1),
+            abi.encodeWithSignature("ownerAtNFT(uint256)", 1),
+            abi.encodeWithSignature("getApprovedNFT(uint256)", 1),
+            abi.encodeWithSignature("isApprovedForAllNFT(address,address)", alice, bob),
+            abi.encodeWithSignature("tokenURINFT(uint256)", 1),
+            abi.encodeWithSignature("implementsDN404()")
+        ];
+        bytes[8] memory expected = [
+            abi.encode(uint256(1)),
+            abi.encode(uint256(1)),
+            abi.encode(alice),
+            abi.encode(alice),
+            abi.encode(address(0)),
+            abi.encode(false),
+            abi.encode(mirror.tokenURI(1)),
+            abi.encode(uint256(1))
+        ];
+        for (uint256 i; i < calls.length; ++i) {
+            (bool ok, bytes memory result) = address(token).staticcall(calls[i]);
+            assertTrue(ok);
+            assertEq(result, expected[i]);
+            (ok, result) = address(token).call{value: 1 ether}(calls[i]);
+            assertFalse(ok);
+            assertEq(result, abi.encodeWithSelector(Swarmlings.UnexpectedETH.selector));
+        }
+        assertEq(address(token).balance, 1 ether);
+        assertEq(token.pending(alice, ids(alice)), 1 ether);
+        assertEq(token.owed(token.TREASURY()), 0);
+        claimAll(alice);
+        assertEq(alice.balance, 1 ether);
+        assertEq(address(token).balance, 0);
+    }
+
+    function test_fallbackPreservesMirrorAuthorizationAndTransfers() public {
+        token.transfer(alice, 2 * UNIT);
+        vm.prank(alice);
+        mirror.approve(bob, 1);
+        assertEq(mirror.getApproved(1), bob);
+        vm.prank(bob);
+        mirror.transferFrom(alice, bob, 1);
+        assertEq(mirror.ownerOf(1), bob);
+        vm.prank(alice);
+        mirror.setApprovalForAll(bob, true);
+        assertTrue(mirror.isApprovedForAll(alice, bob));
+        vm.prank(bob);
+        mirror.transferFrom(alice, bob, 2);
+        assertEq(mirror.ownerOf(2), bob);
+        assertEq(token.balanceOf(bob), 2 * UNIT);
+
+        (bool ok, bytes memory result) = address(token)
+            .call(abi.encodeWithSignature("transferFromNFT(address,address,uint256,address)", bob, alice, 1, bob));
+        assertFalse(ok);
+        assertEq(result, abi.encodeWithSelector(DN404.SenderNotMirror.selector));
+        (ok, result) = address(token).call(hex"deadbeef");
+        assertFalse(ok);
+        assertEq(result, abi.encodeWithSelector(DN404.FnSelectorNotRecognized.selector));
+        (ok,) = address(token).call{value: 1}("");
+        assertFalse(ok);
+    }
+
     function test_contractWalletOptInAndOptOut() public {
         ClaimReceiver receiver = new ClaimReceiver(token);
         token.transfer(address(receiver), 2 * UNIT);
